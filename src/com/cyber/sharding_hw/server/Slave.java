@@ -16,6 +16,7 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Created by Vadim on 13.01.2015.
@@ -27,6 +28,7 @@ public class Slave implements JMSMessageProcessor{
     private int maxShardSize;
     private ExecutorService connectionExecutor;
     private Semaphore semaphore;
+    private AtomicBoolean stopped;
     private ServerSocket serverSocket;
     private JMSworker jmsWorker;
     private Thread slaveHeartBeat;
@@ -41,6 +43,8 @@ public class Slave implements JMSMessageProcessor{
         this.connectionExecutor = Executors.newFixedThreadPool(maxConnections);
         this.semaphore = new Semaphore(maxConnections);
         this.objectMap = new ConcurrentHashMap<>();
+
+        this.stopped = new AtomicBoolean(false);
 
         this.jmsWorker = new JMSworker(addressJMSServer, jmsTopicName, jmsBrockerUserName, jmsBrockerPass, this);
         loadDataFromPersistStorage();
@@ -85,6 +89,7 @@ public class Slave implements JMSMessageProcessor{
                         rebalance((HashMap<Integer, MetaSlave>) msg.getObject());
                         break;
                     case MsgTitle.STOP:
+                        stopped.set(true);
                         jmsWorker.sendMessage(Direction.TO_MASTER, MsgTitle.STOPPED, stop());
                         new Thread(new JMSworkerStopper()).start();
                         break;
@@ -112,7 +117,7 @@ public class Slave implements JMSMessageProcessor{
         for (Map.Entry<Integer, Object> entry : objectMap.entrySet()) {
             int rule = entry.getKey() % map.size();
             MetaSlave metaSlave = map.get(rule);
-            if (!(metaSlave.getIp().equals(ip)) && !(metaSlave.getPort() == port)) {
+            if (!(metaSlave.getIp().equals(ip)) || !(metaSlave.getPort() == port)) {
                 slaveRebalancers.add(new SlaveRebalancer(metaSlave.getIp(), metaSlave.getPort(), entry.getKey()));
             }
         }
@@ -120,10 +125,11 @@ public class Slave implements JMSMessageProcessor{
         try {
             ExecutorService balancer = Executors.newFixedThreadPool(maxConnections);
             futures = balancer.invokeAll(slaveRebalancers);
+            balancer.shutdown();
+            balancer.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
-
 
         for (Future<Response> f : futures) {
             try {
@@ -150,7 +156,12 @@ public class Slave implements JMSMessageProcessor{
         } catch (InterruptedException e) {
             e.printStackTrace();
         }
+        System.out.println("slave " + ip + ":" + port + " stopped");
         return "slave " + ip + ":" + port + " stopped";
+    }
+
+    public boolean isStopped() {
+        return stopped.get();
     }
 
     private void saveDataInPersistStorage() {

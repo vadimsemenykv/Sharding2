@@ -1,13 +1,18 @@
 package com.cyber.sharding_hw.server;
 
+import java.awt.*;
+import java.awt.event.KeyEvent;
 import java.util.Scanner;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Created by Vadim on 05.01.2015.
  */
 public class Server {
     public static void main(String[] args) {
-        Scanner scanner = new Scanner(System.in);
+        final Scanner scanner = new Scanner(System.in);
         System.out.println("To start Master put \"M\"\n" +
                 "To start Slave put \"S\"");
         String str = scanner.nextLine();
@@ -45,7 +50,7 @@ public class Server {
                     int shardPort = Integer.parseInt(scanner.nextLine());
 
                     master.addShard(shardIp, shardPort);
-//                    master.addShard("127.0.0.1", port);
+//                    master.addShard("127.0.0.1", shardPort);
                 }
                 if (str.toLowerCase().equals("status")) master.getStatus();
                 if (str.toLowerCase().equals("stop")) master.stop();
@@ -69,19 +74,26 @@ public class Server {
             System.out.println("Set JMS broker password:");
             String pass = scanner.nextLine();
 
-            Slave slave = new Slave(ip, port, maxConnections, maxShardSize, jmsIp, topicName, user, pass);
-//            Slave slave = new Slave("127.0.0.1", port, 10, 5, "127.0.0.1:7676", "TestTopic", "admin", "admin");
+            final Slave slave = new Slave(ip, port, maxConnections, maxShardSize, jmsIp, topicName, user, pass);
+//            final Slave slave = new Slave("127.0.0.1", port, 10, 5, "127.0.0.1:7676", "TestTopic", "admin", "admin");
 
             System.out.println("To get Server status put \"status\"\n" +
                     "To stop server put \"stop\"\n");
 
-            while (!str.toLowerCase().equals("stop")) {
-                str = scanner.nextLine();
-                if (str.toLowerCase().equals("stop")) slave.stop();
-                if (str.toLowerCase().equals("status")) System.out.println(slave.getStatus());
-            }
+            Thread consoleReader = new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    String str = "";
+                    while (!str.toLowerCase().equals("stop") && !slave.isStopped()) {
+                        str = scanner.nextLine();
+                        if (str.toLowerCase().equals("stop")) slave.stop();
+                        if (str.toLowerCase().equals("status")) System.out.println(slave.getStatus());
+                    }
+                    scanner.close();
+                }
+            });
+            consoleReader.setDaemon(true);
+            consoleReader.start();
         }
-
-        scanner.close();
     }
 }
